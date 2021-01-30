@@ -737,29 +737,23 @@ impl Drop for CallThreadState {
 // happen which requires us to read some contextual state to figure out what to
 // do with the trap. This `tls` module is used to persist that information from
 // the caller to the trap site.
-mod tls {
+pub mod tls {
     use super::CallThreadState;
     use std::cell::Cell;
     use std::ptr;
 
-    thread_local!(static PTR: Cell<*const CallThreadState> = Cell::new(ptr::null()));
+    thread_local!(pub static PTR: Cell<*const CallThreadState> = Cell::new(ptr::null()));
 
     /// Configures thread local state such that for the duration of the
     /// execution of `closure` any call to `with` will yield `ptr`, unless this
     /// is recursively called again.
     pub fn set<R>(ptr: &CallThreadState, closure: impl FnOnce() -> R) -> R {
-        struct Reset<'a, T: Copy>(&'a Cell<T>, T);
-
-        impl<T: Copy> Drop for Reset<'_, T> {
-            fn drop(&mut self) {
-                self.0.set(self.1);
-            }
-        }
-
-        PTR.with(|p| {
-            let _r = Reset(p, p.replace(ptr));
-            closure()
-        })
+        let (result, reset_cts) = PTR.with(|p| {
+            let reset_cts = p.replace(ptr);
+            (closure(), reset_cts)
+        });
+        PTR.with(|p| p.set(reset_cts));
+        result
     }
 
     /// Returns the last pointer configured with `set` above. Panics if `set`
@@ -779,7 +773,7 @@ mod tls {
 /// and registering our own alternate stack that is large enough and has a guard
 /// page.
 #[cfg(unix)]
-fn setup_unix_sigaltstack() -> Result<(), Trap> {
+pub fn setup_unix_sigaltstack() -> Result<(), Trap> {
     use std::cell::RefCell;
     use std::ptr::null_mut;
 
